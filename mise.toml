@@ -1,0 +1,5 @@
+[tools]
+python = "3.13"
+uv = "latest"
+node = "latest"
+ruff = "latest"

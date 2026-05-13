@@ -1,0 +1,19 @@
+{
+  "name": "health-api",
+  "dockerComposeFile": "compose.yaml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/health-api",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {}
+  },
+  "postCreateCommand": "scripts/setup",
+  "forwardPorts": [
+    8000
+  ],
+  "portsAttributes": {
+    "8000": {
+      "label": "Health API",
+      "onAutoForward": "notify"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspaces/health-api:cached
+    working_dir: /workspaces/health-api
+    command: sleep infinity
+    ports:
+      - "8000:8000"
+    environment:
+      MISE_GITHUB_TOKEN: ${GITHUB_MISE_TOKEN}
