@@ -10,6 +10,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 COPY pyproject.toml .
 COPY uv.lock .
+COPY README.md .
 COPY src/ src/
 
 RUN uv sync --no-dev --frozen
