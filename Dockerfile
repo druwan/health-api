@@ -13,7 +13,7 @@ COPY src/ src/
 
 RUN uv sync --no-dev --frozen
 
-ENV PAHT="/app/.venv/bin:$PATH"
+ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 
