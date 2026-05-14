@@ -135,6 +135,7 @@ def insert_metrics(conn: psycopg.Connection, metrics: list[HealthMetric]) -> tup
             )
             stats["metrics"] += 1
             if not metric.data:
+                logger.debug("  %-45s no data", metric.name)
                 continue
 
             inserter, model_cls = METRIC_INSERTERS.get(
@@ -150,12 +151,15 @@ def insert_metrics(conn: psycopg.Connection, metrics: list[HealthMetric]) -> tup
 
             if parsed:
                 try:
-                    stats["samples"] += inserter(cur, metric_id, metric.name, parsed)
+                    n = inserter(cur, metric_id, metric.name, parsed)
+                    stats["samples"] += n
+                    logger.debug("  %-45s %d samples", metric.name, n)
                 except Exception as e:
                     logger.error("Failed inserting %s: %s", metric.name, e)
                     stats["errors"] += 1
 
         conn.commit()
+    logger.info("Metrics insert complete — %s", stats)
     return payload_id, stats
 
 
@@ -167,12 +171,12 @@ def insert_metrics(conn: psycopg.Connection, metrics: list[HealthMetric]) -> tup
 def _build_linestring(route: list[RouteLocation]) -> str | None:
     if not route or len(route) < 2:
         return None
-    coords = " ,".join(f"{p.longitude} {p.latitude} {p.altitude or 0}" for p in route)
+    coords = ", ".join(f"{p.longitude} {p.latitude} {p.altitude or 0}" for p in route)
     return f"LINESTRING Z ({coords})"
 
 
 def insert_workouts(conn: psycopg.Connection, workouts: list[WorkoutPayload]) -> tuple[str, dict]:
-    stats = {"workouts": 0, "errors": 0}
+    stats = {"workouts": 0, "with_route": 0, "errors": 0}
     with conn.cursor() as cur:
         payload_id = _new_payload(cur)
         for w in workouts:
@@ -197,7 +201,6 @@ def insert_workouts(conn: psycopg.Connection, workouts: list[WorkoutPayload]) ->
                         if w.distance.units in ("mi", "miles")
                         else w.distance.qty
                     )
-
                 elevation_m = None
                 if w.elevation_up:
                     elevation_m = (
@@ -244,6 +247,7 @@ def insert_workouts(conn: psycopg.Connection, workouts: list[WorkoutPayload]) ->
                             track_wkt,
                         ),
                     )
+                    stats["with_route"] += 1
                 else:
                     cur.execute(
                         """
@@ -273,10 +277,17 @@ def insert_workouts(conn: psycopg.Connection, workouts: list[WorkoutPayload]) ->
                         ),
                     )
                 stats["workouts"] += 1
+                logger.debug(
+                    "  Workout: %s — %.1fkm route=%s",
+                    w.name,
+                    (distance_m or 0) / 1000,
+                    bool(track_wkt),
+                )
             except Exception as e:
-                logger.error("Failed inserting workout: %s", e)
+                logger.error("Failed inserting workout %s: %s", w.name, e)
                 stats["errors"] += 1
         conn.commit()
+    logger.info("Workouts insert complete — %s", stats)
     return payload_id, stats
 
 
@@ -307,6 +318,7 @@ def insert_symptoms(conn: psycopg.Connection, entries: list[SymptomEntry]) -> tu
             logger.error("Failed inserting symptoms: %s", e)
             stats["errors"] += 1
         conn.commit()
+    logger.info("Symptoms insert complete — %s", stats)
     return payload_id, stats
 
 
@@ -350,6 +362,7 @@ def insert_ecg(conn: psycopg.Connection, entries: list[ECGEntry]) -> tuple[str, 
             logger.error("Failed inserting ECG: %s", e)
             stats["errors"] += 1
         conn.commit()
+    logger.info("ECG insert complete — %s", stats)
     return payload_id, stats
 
 
@@ -379,6 +392,7 @@ def insert_heart_rate_notifications(
             logger.error("Failed inserting HR notifications: %s", e)
             stats["errors"] += 1
         conn.commit()
+    logger.info("HR notifications insert complete — %s", stats)
     return payload_id, stats
 
 
@@ -426,6 +440,7 @@ def insert_state_of_mind(
             logger.error("Failed inserting state of mind: %s", e)
             stats["errors"] += 1
         conn.commit()
+    logger.info("State of mind insert complete — %s", stats)
     return payload_id, stats
 
 
@@ -466,6 +481,7 @@ def insert_cycle_tracking(
             logger.error("Failed inserting cycle tracking: %s", e)
             stats["errors"] += 1
         conn.commit()
+    logger.info("Cycle tracking insert complete — %s", stats)
     return payload_id, stats
 
 
@@ -513,4 +529,5 @@ def insert_medications(
             logger.error("Failed inserting medications: %s", e)
             stats["errors"] += 1
         conn.commit()
+    logger.info("Medications insert complete — %s", stats)
     return payload_id, stats
