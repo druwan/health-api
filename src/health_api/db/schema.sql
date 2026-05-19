@@ -321,3 +321,58 @@ CREATE TABLE IF NOT EXISTS medication_codings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_med_coding ON medication_codings (med_id);
+
+
+-- ============================================================
+-- Migrations
+-- ============================================================
+
+-- cycle_tracking: renamed date -> start_date, added end_date/name/value/is_cycle_start
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'cycle_tracking' AND column_name = 'date'
+    ) THEN
+      ALTER TABLE cycle_tracking RENAME COLUMN date TO start_date;
+  END IF;
+END $$;
+
+ALTER TABLE cycle_tracking
+    ADD COLUMN IF NOT EXISTS end_date       TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS name           TEXT,
+    ADD COLUMN IF NOT EXISTS value          TEXT,
+    ADD COLUMN IF NOT EXISTS is_cycle_start BOOLEAN;
+
+-- workouts: drop sport, add new columns
+ALTER TABLE workouts
+    DROP COLUMN IF EXISTS sport,
+    ADD COLUMN IF NOT EXISTS is_indoor        BOOLEAN,
+    ADD COLUMN IF NOT EXISTS elevation_loss_m DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS avg_speed_mps    DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS temperature_c    DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS humidity_pct     DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS intensity_met    DOUBLE PRECISION;
+
+-- sleep_analysis: add timing columns
+ALTER TABLE sleep_analysis
+    ADD COLUMN IF NOT EXISTS sleep_start  TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS sleep_end    TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS in_bed_start TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS in_bed_end   TIMESTAMPTZ;
+
+-- ecg: add severity, child voltage table already handled by CREATE TABLE IF NOT EXISTS
+ALTER TABLE ecg
+    ADD COLUMN IF NOT EXISTS severity TEXT;
+
+-- heart_rate_notifications: add notification_type
+ALTER TABLE heart_rate_notifications
+    ADD COLUMN IF NOT EXISTS notification_type TEXT;
+
+-- state_of_mind: add metadata
+ALTER TABLE state_of_mind
+    ADD COLUMN IF NOT EXISTS metadata JSONB;
+
+-- medications: add scheduled_date
+ALTER TABLE medications
+    ADD COLUMN IF NOT EXISTS scheduled_date TIMESTAMPTZ;
