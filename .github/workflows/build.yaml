@@ -49,6 +49,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ steps.vars.outputs.tag }}
+            type=raw,value=latest
 
       - name: Build & Push
         id: push
