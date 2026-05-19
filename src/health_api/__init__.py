@@ -1,2 +1,2 @@
 def hello() -> str:
-    return "Hello from health-api!"
+  return "Hello from health-api!"
