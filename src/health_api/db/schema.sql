@@ -1,5 +1,5 @@
 -- ============================================================
--- Lifedata schema — Health Auto Export (JSON format)
+-- Health Auto Export schema
 -- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS postgis;
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS sleep_analysis (
     start_date   TIMESTAMPTZ,
     end_date     TIMESTAMPTZ,
     qty          DOUBLE PRECISION,
-    value        TEXT,
+    value        TEXT,   -- "Awake" | "Core" | "REM" | "Deep" | "In Bed" | "Asleep" | …
     source       TEXT,
     -- Aggregated fields
     date         TIMESTAMPTZ,
@@ -76,7 +76,12 @@ CREATE TABLE IF NOT EXISTS sleep_analysis (
     core         DOUBLE PRECISION,
     deep         DOUBLE PRECISION,
     rem          DOUBLE PRECISION,
-    in_bed       DOUBLE PRECISION
+    in_bed       DOUBLE PRECISION,
+    -- Present in both modes
+    sleep_start  TIMESTAMPTZ,
+    sleep_end    TIMESTAMPTZ,
+    in_bed_start TIMESTAMPTZ,
+    in_bed_end   TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_sleep_start ON sleep_analysis (start_date);
@@ -84,32 +89,65 @@ CREATE INDEX IF NOT EXISTS idx_sleep_date  ON sleep_analysis (date);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sleep ON sleep_analysis (start_date, end_date, value)
     WHERE start_date IS NOT NULL AND end_date IS NOT NULL;
 
+-- Blood glucose — qty + mealTime
+CREATE TABLE IF NOT EXISTS blood_glucose (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    metric_id   UUID REFERENCES health_metric(id) ON DELETE CASCADE,
+    metric_name TEXT NOT NULL,
+    date        TIMESTAMPTZ NOT NULL,
+    qty         DOUBLE PRECISION,
+    meal_time   TEXT,   -- "Before Meal" | "After Meal" | "Unspecified"
+    source      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_bg_date ON blood_glucose (date);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_blood_glucose ON blood_glucose (metric_name, date);
+
+-- Insulin delivery — qty + reason
+CREATE TABLE IF NOT EXISTS insulin_delivery (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    metric_id   UUID REFERENCES health_metric(id) ON DELETE CASCADE,
+    metric_name TEXT NOT NULL,
+    date        TIMESTAMPTZ NOT NULL,
+    qty         DOUBLE PRECISION,
+    reason      TEXT,   -- "Bolus" | "Basal"
+    source      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_insulin_date ON insulin_delivery (date);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_insulin ON insulin_delivery (metric_name, date, reason);
+
 -- ============================================================
--- Workouts
+-- Workouts (v2)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS workouts (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    payload_id       UUID REFERENCES health_payload(id) ON DELETE CASCADE,
-    external_id      TEXT,
-    name             TEXT,
-    sport            TEXT,
-    location         TEXT,
-    started_at       TIMESTAMPTZ NOT NULL,
-    ended_at         TIMESTAMPTZ,
-    duration_secs    DOUBLE PRECISION,
-    distance_m       DOUBLE PRECISION,
-    elevation_gain_m DOUBLE PRECISION,
-    avg_heart_rate   DOUBLE PRECISION,
-    max_heart_rate   DOUBLE PRECISION,
-    calories         DOUBLE PRECISION,
-    source           TEXT DEFAULT 'apple_health',
-    track            geometry(LineStringZ, 4326),
-    created_at       TIMESTAMPTZ DEFAULT NOW()
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payload_id        UUID REFERENCES health_payload(id) ON DELETE CASCADE,
+    external_id       TEXT,
+    name              TEXT,              -- workout type e.g. "Running"
+    location          TEXT,              -- "Indoor" | "Outdoor" | "Pool" | "Open Water"
+    is_indoor         BOOLEAN,
+    started_at        TIMESTAMPTZ NOT NULL,
+    ended_at          TIMESTAMPTZ,
+    duration_secs     DOUBLE PRECISION,
+    distance_m        DOUBLE PRECISION,
+    elevation_gain_m  DOUBLE PRECISION,
+    elevation_loss_m  DOUBLE PRECISION,
+    avg_heart_rate    DOUBLE PRECISION,
+    max_heart_rate    DOUBLE PRECISION,
+    calories          DOUBLE PRECISION,
+    avg_speed_mps     DOUBLE PRECISION,
+    temperature_c     DOUBLE PRECISION,
+    humidity_pct      DOUBLE PRECISION,
+    intensity_met     DOUBLE PRECISION,
+    source            TEXT DEFAULT 'apple_health',
+    track             geometry(LineStringZ, 4326),
+    created_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_workouts_started ON workouts (started_at);
-CREATE INDEX IF NOT EXISTS idx_workouts_sport   ON workouts (sport);
+CREATE INDEX IF NOT EXISTS idx_workouts_name    ON workouts (name);
 CREATE INDEX IF NOT EXISTS idx_workouts_track   ON workouts USING GIST (track)
     WHERE track IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_workout ON workouts (started_at, source);
@@ -124,7 +162,7 @@ CREATE TABLE IF NOT EXISTS symptoms (
     start_date   TIMESTAMPTZ NOT NULL,
     end_date     TIMESTAMPTZ NOT NULL,
     name         TEXT NOT NULL,
-    severity     TEXT,
+    severity     TEXT,           -- "Mild" | "Moderate" | "Severe"
     user_entered BOOLEAN,
     source       TEXT
 );
@@ -137,50 +175,90 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_symptom ON symptoms (start_date, end_date, 
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS ecg (
-    id                           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    payload_id                   UUID REFERENCES health_payload(id) ON DELETE CASCADE,
-    start_date                   TIMESTAMPTZ NOT NULL,
-    end_date                     TIMESTAMPTZ NOT NULL,
-    classification               TEXT,
-    average_heart_rate           DOUBLE PRECISION,
-    sampling_frequency_hz        DOUBLE PRECISION,
+    id                             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payload_id                     UUID REFERENCES health_payload(id) ON DELETE CASCADE,
+    start_date                     TIMESTAMPTZ NOT NULL,
+    end_date                       TIMESTAMPTZ NOT NULL,
+    classification                 TEXT,
+    severity                       TEXT,
+    average_heart_rate             DOUBLE PRECISION,
+    sampling_frequency_hz          DOUBLE PRECISION,
     number_of_voltage_measurements INTEGER,
-    source                       TEXT
+    source                         TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_ecg_start ON ecg (start_date);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ecg ON ecg (start_date, end_date);
+
+-- Voltage measurements stored in a child table (large; omit if waveform not needed)
+CREATE TABLE IF NOT EXISTS ecg_voltage (
+    id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ecg_id  UUID REFERENCES ecg(id) ON DELETE CASCADE,
+    ts      TIMESTAMPTZ NOT NULL,   -- millisecond precision
+    voltage DOUBLE PRECISION NOT NULL,
+    units   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ecg_voltage_ts ON ecg_voltage (ecg_id, ts);
 
 -- ============================================================
 -- Heart Rate Notifications
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS heart_rate_notifications (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    payload_id UUID REFERENCES health_payload(id) ON DELETE CASCADE,
-    start_date TIMESTAMPTZ NOT NULL,
-    end_date   TIMESTAMPTZ NOT NULL,
-    threshold  DOUBLE PRECISION
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payload_id        UUID REFERENCES health_payload(id) ON DELETE CASCADE,
+    start_date        TIMESTAMPTZ NOT NULL,
+    end_date          TIMESTAMPTZ NOT NULL,
+    threshold         DOUBLE PRECISION,   -- NULL for irregular rhythm
+    notification_type TEXT                -- "high" | "low" | "irregular"
 );
 
 CREATE INDEX IF NOT EXISTS idx_hrn_start ON heart_rate_notifications (start_date);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_hrn ON heart_rate_notifications (start_date, end_date);
+
+-- Per-notification HR time-series
+CREATE TABLE IF NOT EXISTS hrn_heart_rate (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    notification_id UUID REFERENCES heart_rate_notifications(id) ON DELETE CASCADE,
+    hr              DOUBLE PRECISION NOT NULL,
+    units           TEXT,
+    period_start    TIMESTAMPTZ NOT NULL,
+    period_end      TIMESTAMPTZ NOT NULL,
+    interval_secs   DOUBLE PRECISION
+);
+
+CREATE INDEX IF NOT EXISTS idx_hrn_hr_start ON hrn_heart_rate (period_start);
+
+-- Per-notification HRV time-series
+CREATE TABLE IF NOT EXISTS hrn_heart_rate_variability (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    notification_id UUID REFERENCES heart_rate_notifications(id) ON DELETE CASCADE,
+    hrv             DOUBLE PRECISION NOT NULL,
+    units           TEXT,
+    period_start    TIMESTAMPTZ NOT NULL,
+    period_end      TIMESTAMPTZ NOT NULL,
+    interval_secs   DOUBLE PRECISION
+);
+
+CREATE INDEX IF NOT EXISTS idx_hrn_hrv_start ON hrn_heart_rate_variability (period_start);
 
 -- ============================================================
 -- State of Mind
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS state_of_mind (
-    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    payload_id            UUID REFERENCES health_payload(id) ON DELETE CASCADE,
-    external_id           TEXT,
-    start_date            TIMESTAMPTZ NOT NULL,
-    end_date              TIMESTAMPTZ NOT NULL,
-    kind                  TEXT,
-    labels                TEXT[],
-    associations          TEXT[],
-    valence               DOUBLE PRECISION,
-    valence_classification DOUBLE PRECISION
+    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payload_id             UUID REFERENCES health_payload(id) ON DELETE CASCADE,
+    external_id            TEXT,
+    start_date             TIMESTAMPTZ NOT NULL,
+    end_date               TIMESTAMPTZ NOT NULL,
+    kind                   TEXT,       -- typically "mood"
+    labels                 TEXT[],
+    associations           TEXT[],
+    valence                DOUBLE PRECISION,
+    valence_classification DOUBLE PRECISION,
+    metadata               JSONB
 );
 
 CREATE INDEX IF NOT EXISTS idx_som_start ON state_of_mind (start_date);
@@ -189,36 +267,57 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_som ON state_of_mind (start_date, end_date,
 -- ============================================================
 -- Cycle Tracking
 -- ============================================================
+-- Spec uses generic start/end/name/value entries (not the old
+-- date/flow/ovulationTestResult shape).
 
 CREATE TABLE IF NOT EXISTS cycle_tracking (
-    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    payload_id            UUID REFERENCES health_payload(id) ON DELETE CASCADE,
-    date                  TIMESTAMPTZ NOT NULL,
-    flow                  TEXT,
-    ovulation_test_result TEXT,
-    basal_body_temperature DOUBLE PRECISION
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payload_id     UUID REFERENCES health_payload(id) ON DELETE CASCADE,
+    start_date     TIMESTAMPTZ NOT NULL,
+    end_date       TIMESTAMPTZ,        -- NULL allowed (open-ended entries)
+    name           TEXT NOT NULL,
+    -- "Menstrual Flow" | "Cervical Mucus Quality" | "Ovulation Test Result" |
+    -- "Progesterone Test Result" | "Pregnancy Test Result" | "Sexual Activity" |
+    -- "Pregnancy" | "Lactation" | "Contraceptive" | irregularity types …
+    value          TEXT,
+    is_cycle_start BOOLEAN
 );
 
-CREATE INDEX IF NOT EXISTS idx_ct_date ON cycle_tracking (date);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_cycle ON cycle_tracking (date);
+CREATE INDEX IF NOT EXISTS idx_ct_start ON cycle_tracking (start_date);
+CREATE INDEX IF NOT EXISTS idx_ct_name  ON cycle_tracking (name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cycle ON cycle_tracking (start_date, name);
 
 -- ============================================================
 -- Medications
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS medications (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    payload_id   UUID REFERENCES health_payload(id) ON DELETE CASCADE,
-    display_text TEXT,
-    nickname     TEXT,
-    start_date   TIMESTAMPTZ NOT NULL,
-    end_date     TIMESTAMPTZ,
-    form         TEXT,
-    status       TEXT,
-    dosage       DOUBLE PRECISION,
-    is_archived  BOOLEAN
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payload_id     UUID REFERENCES health_payload(id) ON DELETE CASCADE,
+    display_text   TEXT,
+    nickname       TEXT,
+    start_date     TIMESTAMPTZ NOT NULL,
+    end_date       TIMESTAMPTZ,
+    scheduled_date TIMESTAMPTZ,
+    form           TEXT,
+    status         TEXT,
+    -- "Not Interacted" | "Notification Not Sent" | "Snoozed" | "Taken" |
+    -- "Skipped" | "Not Logged" | "Unspecified"
+    dosage         DOUBLE PRECISION,
+    is_archived    BOOLEAN
 );
 
 CREATE INDEX IF NOT EXISTS idx_med_start ON medications (start_date);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_medication ON medications (display_text, start_date)
     WHERE display_text IS NOT NULL;
+
+-- RxNorm / NDC codings per medication entry
+CREATE TABLE IF NOT EXISTS medication_codings (
+    id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    med_id  UUID REFERENCES medications(id) ON DELETE CASCADE,
+    code    TEXT NOT NULL,
+    system  TEXT NOT NULL,
+    version TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_med_coding ON medication_codings (med_id);
